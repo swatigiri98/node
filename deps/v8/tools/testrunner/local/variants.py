@@ -14,6 +14,8 @@ ALL_VARIANT_FLAGS = {
     "interpreted_regexp": [["--regexp-interpret-all"]],
     "stress_regexp_jit": [["--regexp-tier-up-ticks=0"]],
     "experimental_regexp": [["--default-to-experimental-regexp-engine"]],
+    # TODO(437003349): Remove once the project is complete.
+    "regexp_assemble_from_bc": [["--regexp-assemble-from-bytecode"]],
     "jitless": [["--jitless", "--wasm-jitless-if-available-for-testing"]],
     # Jit-fuzzing variants pass --no-fail as most test conditions are violated.
     # We only look for dchecks and crashes. As a result, negative tests like
@@ -32,6 +34,13 @@ ALL_VARIANT_FLAGS = {
         "--maglev", "--no-turbofan",
         "--optimize-on-next-call-optimizes-to-maglev"
     ]],
+    # combination for maglev_no_turbofan and regexp_assemble_from_bc
+    # TODO(437003349): Remove once the project is complete.
+    "maglev_no_turbofan_regexp_from_bc": [[
+        "--maglev", "--no-turbofan",
+        "--optimize-on-next-call-optimizes-to-maglev",
+        "--regexp-assemble-from-bytecode"
+    ]],
     "stress_maglev": [[
         "--maglev", "--stress-maglev",
         "--optimize-on-next-call-optimizes-to-maglev"
@@ -48,23 +57,16 @@ ALL_VARIANT_FLAGS = {
         "--maglev", "--stress-maglev", "--maglev-non-eager-inlining",
         "--optimize-on-next-call-optimizes-to-maglev"
     ]],
-    "conservative_pinning": [[
+    "conservative_stack_scanning": [[
+        "--conservative-stack-scanning",
         "--scavenger-conservative-object-pinning",
         "--stress-scavenger-conservative-object-pinning"
     ]],
     "precise_pinning": [[
         "--precise-object-pinning", "--scavenger-precise-object-pinning"
     ]],
-    # We test both the JS and Wasm Turboshaft pipelines under the same variant.
-    # For extended Wasm Turboshaft coverage, we add --no-liftoff to the options.
-    "turboshaft": [[
-        "--turboshaft",
-        "--no-wasm-generic-wrapper",
-        "--no-liftoff",
-    ]],
     # Turboshaft with Maglev as a frontend
     "turbolev": [[
-        "--turboshaft",
         "--turbolev",
     ]],
     "concurrent_sparkplug": [["--concurrent-sparkplug", "--sparkplug"]],
@@ -125,8 +127,8 @@ ALL_VARIANT_FLAGS = {
 # disabled (i.e. not part of the binary), or when all codegen is disallowed (in
 # jitless mode).
 kIncompatibleFlagsForNoTurbofan = [
-    "--turbofan", "--always-turbofan", "--liftoff", "--validate-asm",
-    "--maglev", "--stress-concurrent-inlining"
+    "--turbofan", "--liftoff", "--validate-asm", "--maglev",
+    "--stress-concurrent-inlining"
 ]
 
 # Flags that lead to a contradiction with the flags provided by the respective
@@ -147,7 +149,6 @@ INCOMPATIBLE_FLAGS_PER_VARIANT = {
         ],
     "nooptimization": [
         "--turbofan",
-        "--always-turbofan",
         "--turboshaft",
         "--turboshaft-wasm-in-js-inlining",
         "--maglev",
@@ -181,12 +182,6 @@ INCOMPATIBLE_FLAGS_PER_VARIANT = {
         "--wasm-dynamic-tiering"
     ],
     "sparkplug": ["--jitless", "--no-sparkplug"],
-    "turboshaft": [
-        # 'turboshaft' disables Liftoff, which conflicts with flags that require
-        # Liftoff support.
-        "--liftoff-only",
-        "--wasm-dynamic-tiering"
-    ],
     "concurrent_sparkplug": ["--jitless"],
     "maglev": ["--jitless", "--no-maglev"],
     "maglev_future": ["--jitless", "--no-maglev", "--no-maglev-future"],
@@ -194,8 +189,15 @@ INCOMPATIBLE_FLAGS_PER_VARIANT = {
         "--jitless",
         "--no-maglev",
         "--turbofan",
-        "--always-turbofan",
         "--stress-concurrent-inlining",
+    ],
+    "maglev_no_turbofan_regexp_from_bc": [
+        "--jitless",
+        "--no-maglev",
+        "--turbofan",
+        "--stress-concurrent-inlining",
+        "--no-regexp-tier-up",
+        "--regexp-interpret-all",
     ],
     "stress_maglev": ["--jitless"],
     "stress_maglev_non_eager_inlining": ["--jitless"],
@@ -204,7 +206,6 @@ INCOMPATIBLE_FLAGS_PER_VARIANT = {
         "--jitless",
         "--no-maglev",
         "--turbofan",
-        "--always-turbofan",
         "--stress-concurrent-inlining",
     ],
     "stress_maglev_tests_with_turbofan": ["--jitless"],
@@ -216,6 +217,9 @@ INCOMPATIBLE_FLAGS_PER_VARIANT = {
     "interpreted_regexp": ["--regexp-tier-up"],
     "stress_regexp_jit": ["--regexp-interpret-all"],
     "experimental_regexp": ["--no-enable-experimental-regexp-engine"],
+    "regexp_assemble_from_bc": [
+        "--no-regexp-tier-up", "--regexp-interpret-all", "--jitless"
+    ],
     "assert_types": [
         "--concurrent-recompilation", "--stress_concurrent_inlining",
         "--no-assert-types"
@@ -295,6 +299,7 @@ INCOMPATIBLE_FLAGS_PER_BUILD_VARIABLE = {
 # The conflicts might be directly contradictory flags or be caused by the
 # implications defined in flag-definitions.h.
 INCOMPATIBLE_FLAGS_PER_EXTRA_FLAG = {
+    "--flush-bytecode": ["--jit-fuzzing"],
     "--concurrent-recompilation": [
         "--predictable", "--assert-types", "--turboshaft-assert-types",
         "--single-threaded"

@@ -111,8 +111,16 @@ RegExpMacroAssemblerRISCV::RegExpMacroAssemblerRISCV(Isolate* isolate,
   __ bind(&start_label_);  // And then continue from here.
 }
 
-RegExpMacroAssemblerRISCV::~RegExpMacroAssemblerRISCV() {
-  // Unuse labels in case we throw away the assembler without calling GetCode.
+RegExpMacroAssemblerRISCV::~RegExpMacroAssemblerRISCV() = default;
+
+void RegExpMacroAssemblerRISCV::AbortedCodeGeneration() {
+  // Tell the underlying assembler that we're aborting the code generation, so
+  // it can clean up and clear constant pools.
+  masm_->AbortedCodeGeneration();
+
+  // We are throwing away the assembler without calling GetCode, so we unuse
+  // all the labels to avoid running into issues when destructing linked, but
+  // not bound, labels.
   entry_label_.Unuse();
   start_label_.Unuse();
   success_label_.Unuse();
@@ -202,7 +210,7 @@ void RegExpMacroAssemblerRISCV::CheckCharacterLT(base::uc16 limit,
   BranchOrBacktrack(on_less, lt, current_character(), Operand(limit));
 }
 
-void RegExpMacroAssemblerRISCV::CheckGreedyLoop(Label* on_equal) {
+void RegExpMacroAssemblerRISCV::CheckFixedLengthLoop(Label* on_equal) {
   Label backtrack_non_equal;
   __ Lw(a0, MemOperand(backtrack_stackpointer(), 0));
   __ BranchShort(&backtrack_non_equal, ne, current_input_offset(), Operand(a0));
@@ -500,15 +508,47 @@ void RegExpMacroAssemblerRISCV::CheckBitInTable(Handle<ByteArray> table,
 
 void RegExpMacroAssemblerRISCV::SkipUntilBitInTable(
     int cp_offset, Handle<ByteArray> table, Handle<ByteArray> nibble_table,
-    int advance_by) {
-  // TODO(pthier): Optimize. Table can be loaded outside of the loop.
-  Label cont, again;
-  Bind(&again);
-  LoadCurrentCharacter(cp_offset, &cont, true);
-  CheckBitInTable(table, &cont);
+    int advance_by, Label* on_match, Label* on_no_match) {
+  const bool use_simd = SkipUntilBitInTableUseSimd(advance_by);
+  if (use_simd) {
+    DCHECK(!nibble_table.is_null());
+    Label scalar;
+    // TODO(kasperl@rivosinc.com): Look into adding a vectorized variant.
+    Bind(&scalar);
+  }
+
+  // Scalar version.
+  Register table_reg = a0;
+  __ li(table_reg, Operand(table));
+
+  Label scalar_repeat;
+  Bind(&scalar_repeat);
+  CheckPosition(cp_offset, on_no_match);
+  LoadCurrentCharacterUnchecked(cp_offset, 1);
+
+  // We use `a1` as a temporary for the table lookup.
+  DCHECK_NE(a1, table_reg);
+
+  // This is the `CheckBitInTable` code, but with the table already loaded
+  // in the `table_reg` register.
+  if (mode_ != LATIN1 || kTableMask != String::kMaxOneByteCharCode) {
+    __ And(a1, current_character(), Operand(kTableMask));
+    __ AddWord(a1, table_reg, a1);
+  } else {
+    __ AddWord(a1, table_reg, current_character());
+  }
+  __ Lbu(a1, FieldMemOperand(a1, OFFSET_OF_DATA_START(ByteArray)));
+  BranchOrBacktrack(on_match, ne, a1, Operand(zero_reg));
+
   AdvanceCurrentPosition(advance_by);
-  GoTo(&again);
-  Bind(&cont);
+  __ jmp(&scalar_repeat);
+}
+
+bool RegExpMacroAssemblerRISCV::SkipUntilBitInTableUseSimd(int advance_by) {
+  // We only use SIMD instead of the scalar version if we advance by 1 byte
+  // in each iteration. For higher values the scalar version performs better.
+  return v8_flags.regexp_simd && advance_by * char_size() == 1 &&
+         CpuFeatures::IsSupported(RISCV_SIMD);
 }
 
 bool RegExpMacroAssemblerRISCV::CheckSpecialClassRanges(
@@ -1088,7 +1128,7 @@ void RegExpMacroAssemblerRISCV::PushRegister(int register_index,
                                              StackCheckFlag check_stack_limit) {
   __ LoadWord(a0, register_location(register_index));
   Push(a0);
-  if (check_stack_limit) {
+  if (check_stack_limit == StackCheckFlag::kCheckStackLimit) {
     CheckStackLimit();
   } else if (V8_UNLIKELY(v8_flags.slow_debug_code)) {
     AssertAboveStackLimitMinusSlack();
@@ -1157,9 +1197,7 @@ void RegExpMacroAssemblerRISCV::ClearRegisters(int reg_from, int reg_to) {
     __ StoreWord(a0, register_location(reg));
   }
 }
-#ifdef RISCV_HAS_NO_UNALIGNED
-bool RegExpMacroAssemblerRISCV::CanReadUnaligned() const { return false; }
-#endif
+
 // Private methods:
 
 void RegExpMacroAssemblerRISCV::CallCheckStackGuardState(Register scratch,
@@ -1240,7 +1278,7 @@ int64_t RegExpMacroAssemblerRISCV::CheckStackGuardState(Address* return_address,
                                                         Address re_frame,
                                                         uintptr_t extra_space) {
   Tagged<InstructionStream> re_code =
-      Cast<InstructionStream>(Tagged<Object>(raw_code));
+      SbxCast<InstructionStream>(Tagged<Object>(raw_code));
   return NativeRegExpMacroAssembler::CheckStackGuardState(
       frame_entry<Isolate*>(re_frame, kIsolateOffset),
       static_cast<int>(frame_entry<int64_t>(re_frame, kStartIndexOffset)),

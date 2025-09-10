@@ -76,9 +76,10 @@ void MarkingVisitorBase<ConcreteVisitor>::ProcessStrongHeapObject(
         reinterpret_cast<void*>(host->map().ptr()),
         reinterpret_cast<void*>(host->address()),
         reinterpret_cast<void*>(slot.address()),
-        reinterpret_cast<void*>(MemoryChunkMetadata::FromHeapObject(heap_object)
-                                    ->owner()
-                                    ->identity()));
+        reinterpret_cast<void*>(
+            MemoryChunkMetadata::FromHeapObject(heap_->isolate(), heap_object)
+                ->owner()
+                ->identity()));
   }
   MarkObject(host, heap_object, target_worklist.value());
   concrete_visitor()->RecordSlot(host, slot, heap_object);
@@ -446,7 +447,7 @@ bool MarkingVisitorBase<ConcreteVisitor>::HasBytecodeArrayForFlushing(
   // called by the concurrent marker.
   Tagged<Object> data = sfi->GetTrustedData(heap_->isolate());
   if (IsCode(data)) {
-    Tagged<Code> baseline_code = Cast<Code>(data);
+    Tagged<Code> baseline_code = TrustedCast<Code>(data);
     DCHECK_EQ(baseline_code->kind(), CodeKind::BASELINE);
     // If baseline code flushing isn't enabled and we have baseline data on SFI
     // we cannot flush baseline / bytecode.
@@ -539,7 +540,7 @@ bool MarkingVisitorBase<ConcreteVisitor>::ShouldFlushBaselineCode(
   MemoryChunk::FromAddress(maybe_code.ptr())->SynchronizedLoad();
 #endif
   if (!IsCode(maybe_code)) return false;
-  Tagged<Code> code = Cast<Code>(maybe_code);
+  Tagged<Code> code = TrustedCast<Code>(maybe_code);
   if (code->kind() != CodeKind::BASELINE) return false;
 
   Tagged<SharedFunctionInfo> shared = Cast<SharedFunctionInfo>(maybe_shared);
@@ -614,7 +615,8 @@ size_t MarkingVisitorBase<ConcreteVisitor>::VisitFixedArray(
     Tagged<Map> map, Tagged<FixedArray> object,
     MaybeObjectSize maybe_object_size) {
   MarkingProgressTracker& progress_tracker =
-      MutablePageMetadata::FromHeapObject(object)->marking_progress_tracker();
+      MutablePageMetadata::FromHeapObject(heap_->isolate(), object)
+          ->marking_progress_tracker();
   return concrete_visitor()->CanUpdateValuesInHeap() &&
                  progress_tracker.IsEnabled()
              ? VisitFixedArrayWithProgressTracker(map, object, progress_tracker)
@@ -692,7 +694,7 @@ size_t MarkingVisitorBase<ConcreteVisitor>::VisitEphemeronHashTable(
       }
     }
   }
-  return table->SizeFromMap(map);
+  return table->SafeSizeFromMap(map).value();
 }
 
 template <typename ConcreteVisitor>
@@ -733,9 +735,9 @@ size_t MarkingVisitorBase<ConcreteVisitor>::VisitWeakCell(
           heap_, concrete_visitor()->marking_state(), unregister_token)) {
     // Record the slots inside the WeakCell, since its IterateBody doesn't visit
     // it.
-    ObjectSlot slot = weak_cell->RawField(WeakCell::kTargetOffset);
+    ObjectSlot slot(&weak_cell->target_);
     concrete_visitor()->RecordSlot(weak_cell, slot, target);
-    slot = weak_cell->RawField(WeakCell::kUnregisterTokenOffset);
+    slot = ObjectSlot(&weak_cell->unregister_token_);
     concrete_visitor()->RecordSlot(weak_cell, slot, unregister_token);
   } else {
     // WeakCell points to a potentially dead object or a dead unregister

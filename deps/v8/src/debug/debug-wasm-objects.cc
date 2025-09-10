@@ -104,7 +104,8 @@ struct IndexedDebugProxy {
                                                make_map_non_extensible);
     auto object = isolate->factory()->NewFastOrSlowJSObjectFromMap(
         object_map, 0, AllocationType::kYoung,
-        DirectHandle<AllocationSite>::null(), NewJSObjectType::kAPIWrapper);
+        DirectHandle<AllocationSite>::null(),
+        NewJSObjectType::kMaybeEmbedderFieldsAndApiWrapper);
     object->SetEmbedderField(kProviderField, *provider);
     return object;
   }
@@ -308,8 +309,8 @@ struct FunctionsProxy : NamedDebugProxy<FunctionsProxy, kFunctionsProxy> {
     DirectHandle<WasmTrustedInstanceData> trusted_data{
         instance->trusted_data(isolate), isolate};
     DirectHandle<WasmFuncRef> func_ref =
-        WasmTrustedInstanceData::GetOrCreateFuncRef(isolate, trusted_data,
-                                                    index);
+        WasmTrustedInstanceData::GetOrCreateFuncRef(
+            isolate, trusted_data, index, wasm::kPrecreateExternal);
     DirectHandle<WasmInternalFunction> internal_function{
         func_ref->internal(isolate), isolate};
     return WasmInternalFunction::GetOrCreateExternal(internal_function);
@@ -563,7 +564,8 @@ class ContextProxyPrototype {
         GetOrCreateDebugProxyMap(isolate, kContextProxy, &CreateTemplate);
     return isolate->factory()->NewJSObjectFromMap(
         object_map, AllocationType::kYoung,
-        DirectHandle<AllocationSite>::null(), NewJSObjectType::kAPIWrapper);
+        DirectHandle<AllocationSite>::null(),
+        NewJSObjectType::kMaybeEmbedderFieldsAndApiWrapper);
   }
 
  private:
